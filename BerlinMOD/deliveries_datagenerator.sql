@@ -35,8 +35,8 @@ The generated data is saved into the database in which the
 functions are executed using the following tables
 
 *  Warehouses(warehouseId int primary key, node bigint, geom geometry(Point))
-*  Vehicles(vehicleId int primary key, licence text, type text, brand text,
-    warehouse int)
+*  Vehicles(vehicleId int primary key, licence text, year int, 
+    type text, brand text, class int, warehouse int)
 *  Trips(vehicle int, day date, seq int, source bigint, target bigint)
     primary key (vehicle, day, seq)
 *  Destinations(id serial, source bigint, target bigint)
@@ -44,10 +44,10 @@ functions are executed using the following tables
     node bigint, edge bigint, cost float, agg_cost float,
     geom geometry, speed float, category int);
 *  Segments(deliveryId int, seq int, source bigint, target bigint, 
-    trip tgeompoint, trajectory geometry, sourceGeom geometry)
+    deliveryTime interval, trip tgeompoint, trajectory geometry, sourceGeom geometry)
     primary key (deliveryId, seq)
-*  Deliveries(DeliveryId int primary key, VehicleId int, Day date, 
-    noCustomers int, Trip tgeompoint, Trajectory geometry)
+*  Deliveries(deliveryId int primary key, vehicleId int, day date, 
+    noCustomers int, trip tgeompoint, trajectory geometry)
 *  QueryPoints(id int primary key, geom geometry)
 *  QueryRegions(id int primary key, geom geometry)
 *  QueryInstants(id int primary key, instant timestamptz)
@@ -104,7 +104,7 @@ BEGIN
     noCustomers int, trip tgeompoint, trajectory geometry);
   DROP TABLE IF EXISTS Segments;
   CREATE TABLE Segments(deliveryId int, seq int, source bigint,
-    target bigint, trip tgeompoint,
+    target bigint, deliveryTime interval, trip tgeompoint,
     -- These columns are used for visualization purposes
     trajectory geometry, sourceGeom geometry,
     PRIMARY KEY (deliveryId, seq));
@@ -160,13 +160,15 @@ BEGIN
             IF messages = 'medium' OR messages = 'verbose' THEN
               RAISE INFO '      Delivery lasted %', deliveryTime;
             END IF;
-            t = t + deliveryTime;
-            trip = appendInstant(trip, tgeompointinst(endValue(trip), t));
+          ELSE
+            deliveryTime = NULL;
           END IF;
+          t = t + deliveryTime;
+          -- trip = appendInstant(trip, tgeompointinst(endValue(trip), t));
           alltrips = alltrips || trip;
           SELECT geom INTO sourceGeom FROM Nodes WHERE id = sourceNode;
-          INSERT INTO Segments(deliveryId, seq, source, target, trip, trajectory, sourceGeom)
-            VALUES (delivId, k, sourceNode, targetNode, trip, trajectory(trip), sourceGeom);
+          INSERT INTO Segments(deliveryId, seq, source, target, deliveryTime, trip, trajectory, sourceGeom)
+            VALUES (delivId, k, sourceNode, targetNode, deliveryTime, trip, trajectory(trip), sourceGeom);
         END LOOP;
         trip = merge(alltrips);
         INSERT INTO Deliveries(deliveryId, vehicle, day, noCustomers, trip, trajectory)
@@ -330,7 +332,8 @@ DECLARE
   -- String to generate the trace message
   str text;
   -- Attributes of table Vehicle
-  licence text; type text; brand text; warehouse int;
+  licence text; year int; type text; 
+  brand text; class int; warehouse int;
 BEGIN
   -------------------------------------------------------------------------
   --  Initialize parameters and variables
@@ -414,15 +417,19 @@ BEGIN
   RAISE INFO 'Creating the Vehicle table';
 
   DROP TABLE IF EXISTS Vehicles;
-  CREATE TABLE Vehicles(vehicleId int PRIMARY KEY, licence text, type text, 
-    brand text, warehouse int);
+  CREATE TABLE Vehicles(vehicleId int PRIMARY KEY, licence text, 
+    year int, type text, brand text, class int, warehouse int);
 
   FOR i IN 1..noVehicles LOOP
     licence = berlinmod_createLicence(i);
+    year = random_int(2000, 2020);
     type = VEHICLETYPES[random_int(1, NOVEHICLETYPES)];
     brand = VEHICLEBRANDS[random_int(1, NOVEHICLEBRANDS)];
+    -- https://en.wikipedia.org/wiki/Truck_classification
+    class = random_int(1, 6);
     warehouse = 1 + ((i - 1) % noWarehouses);
-    INSERT INTO Vehicles VALUES (i, licence, type, brand, warehouse);
+    INSERT INTO Vehicles VALUES 
+      (i, licence, year, type, brand, class, warehouse);
   END LOOP;
 
   -- Build indexes to speed up processing

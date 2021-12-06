@@ -27,8 +27,8 @@ osm2pgrouting -U username -f brussels.osm --dbname brussels -c mapconfig_brussel
 DROP TABLE IF EXISTS Edges;
 CREATE TABLE Edges AS
 SELECT gid as id, osm_id, tag_id, length_m, source, target, source_osm,
-	target_osm, cost_s, reverse_cost_s, one_way, maxspeed_forward,
-	maxspeed_backward, priority, ST_Transform(the_geom, 3857) AS geom
+  target_osm, cost_s, reverse_cost_s, one_way, maxspeed_forward,
+  maxspeed_backward, priority, ST_Transform(the_geom, 3857) AS geom
 FROM ways;
 
 -- The nodes table should contain ONLY the vertices that belong to the largest
@@ -37,16 +37,16 @@ FROM ways;
 DROP TABLE IF EXISTS Nodes;
 CREATE TABLE Nodes AS
 WITH Components AS (
-	SELECT * FROM pgr_strongComponents(
-		'SELECT id, source, target, length_m AS cost, '
-		'length_m * sign(reverse_cost_s) AS reverse_cost FROM edges') ),
+  SELECT * FROM pgr_strongComponents(
+    'SELECT id, source, target, length_m AS cost, '
+    'length_m * sign(reverse_cost_s) AS reverse_cost FROM edges') ),
 LargestComponent AS (
-	SELECT component, count(*) FROM Components
-	GROUP BY component ORDER BY count(*) DESC LIMIT 1),
+  SELECT component, count(*) FROM Components
+  GROUP BY component ORDER BY count(*) DESC LIMIT 1),
 Connected AS (
-	SELECT id, osm_id, the_geom AS geom
-	FROM ways_vertices_pgr W, LargestComponent L, Components C
-	WHERE W.id = C.node AND C.component = L.component
+  SELECT id, osm_id, the_geom AS geom
+  FROM ways_vertices_pgr W, LargestComponent L, Components C
+  WHERE W.id = C.node AND C.component = L.component
 )
 SELECT ROW_NUMBER() OVER () AS id, osm_id, ST_Transform(geom, 3857) AS geom
 FROM Connected;
@@ -73,16 +73,17 @@ SELECT count(*) FROM Nodes;
 */
 
 -------------------------------------------------------------------------------
--- Get communes data to define home and work regions
+-- Get municipalities data to define home and work regions
 -------------------------------------------------------------------------------
 
--- Brussels' communes data from the following sources
+-- Brussels' municipalities data from the following sources
 -- https://en.wikipedia.org/wiki/List_of_municipalities_of_the_Brussels-Capital_Region
 -- http://ibsa.brussels/themes/economie
 
-DROP TABLE IF EXISTS Communes;
-CREATE TABLE Communes(Id,Name,Population,PercPop,PopDensityKm2,NoEnterp,PercEnterp) AS
-SELECT * FROM (Values
+DROP TABLE IF EXISTS Municipalities;
+CREATE TABLE Municipalities(Id, Name, Population, PercPop, PopDensityKm2,
+  NoEnterp, PercEnterp) AS
+SELECT * FROM (VALUES
 (1,'Anderlecht',118241,0.10,6680,6460,0.08),
 (2,'Auderghem - Oudergem',33313,0.03,3701,2266,0.03),
 (3,'Berchem-Sainte-Agathe - Sint-Agatha-Berchem',24701,0.02,8518,1266,0.02),
@@ -103,13 +104,13 @@ SELECT * FROM (Values
 (18,'Woluwe-Saint-Lambert - Sint-Lambrechts-Woluwe',55216,0.05,7669,3590,0.04),
 (19,'Woluwe-Saint-Pierre - Sint-Pieters-Woluwe',41217,0.03,4631,2859,0.04)) Temp;
 
--- Compute the geometry of the communes from the boundaries in planet_osm_line
+-- Compute the geometry of the municipalities from the boundaries in planet_osm_line
 
-DROP TABLE IF EXISTS CommunesGeom;
-CREATE TABLE CommunesGeom AS
+DROP TABLE IF EXISTS MunicGeom;
+CREATE TABLE MunicGeom AS
 SELECT name, way AS geom
 FROM planet_osm_line L
-WHERE name IN ( SELECT name from Communes );
+WHERE name IN ( SELECT name from Municipalities );
 
 /*
 -- There is an error in the geometry for Saint-Josse that can be visualized with QGIS
@@ -118,7 +119,7 @@ WHERE name IN ( SELECT name from Communes );
 DROP TABLE IF EXISTS SaintJosse;
 CREATE TABLE SaintJosse AS
 WITH Temp AS (
-	SELECT way FROM planet_osm_line WHERE name = 'Saint-Josse-ten-Noode - Sint-Joost-ten-Node'
+  SELECT way FROM planet_osm_line WHERE name = 'Saint-Josse-ten-Noode - Sint-Joost-ten-Node'
 )
 SELECT i AS Id, ST_PointN(way, i) AS geom
 FROM Temp, generate_series(1, ST_Numpoints(way)) i;
@@ -130,7 +131,7 @@ FROM Temp, generate_series(1, ST_Numpoints(way)) i;
 */
 
 -- Correct the error in the geometry for Saint-Josse
-UPDATE CommunesGeom
+UPDATE MunicGeom
 SET geom = geometry 'SRID=3857;Linestring(485033.737822976 6596581.15577077,
 484882.699537867 6595894.90831692, 486242.322402569 6595270.99729829,
 486270.987171449 6595242.32624894, 486296.334619502 6595152.22292529,
@@ -152,60 +153,24 @@ WHERE name = 'Saint-Josse-ten-Noode - Sint-Joost-ten-Node';
 
 -- There is a non-closed geometry associated with Saint-Gilles
 
-DELETE FROM CommunesGeom WHERE NOT ST_IsClosed(geom);
+DELETE FROM MunicGeom WHERE NOT ST_IsClosed(geom);
 
-ALTER TABLE CommunesGeom ADD COLUMN geompoly geometry;
+ALTER TABLE MunicGeom ADD COLUMN geompoly geometry;
 
-UPDATE CommunesGeom
+UPDATE MunicGeom
 SET geompoly = ST_MakePolygon(geom);
 
 -- Disjoint components of Ixelles are encoded as two different features
 -- For this reason ST_Union is needed to make a multipolygon
-ALTER TABLE Communes ADD COLUMN geom geometry;
-UPDATE Communes C
+ALTER TABLE Municipalities ADD COLUMN geom geometry;
+UPDATE Municipalities C
 SET geom = (
-	SELECT ST_Union(geompoly) FROM CommunesGeom G
-	WHERE C.name = G.name);
+  SELECT ST_Union(geompoly) FROM MunicGeom G
+  WHERE C.name = G.name);
 
 -- Clean up tables
 DROP TABLE IF EXISTS SaintJosse;
-DROP TABLE IF EXISTS CommunesGeom;
-
--- Create home/work regions and nodes
-
-DROP TABLE IF EXISTS HomeRegions;
-CREATE TABLE HomeRegions(id, priority, weight, prob, cumprob, geom) AS
-SELECT id, id, population, PercPop,
-	SUM(PercPop) OVER (ORDER BY id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS CumProb,
-	geom
-FROM Communes;
-
-CREATE INDEX HomeRegions_geom_idx ON HomeRegions USING GiST(geom);
-
-DROP TABLE IF EXISTS WorkRegions;
-CREATE TABLE WorkRegions(id, priority, weight, prob, cumprob, geom) AS
-SELECT id, id, NoEnterp, PercEnterp,
-	SUM(PercEnterp) OVER (ORDER BY id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS CumProb,
-	geom
-FROM Communes;
-
-CREATE INDEX WorkRegions_geom_idx ON WorkRegions USING GiST(geom);
-
-DROP TABLE IF EXISTS HomeNodes;
-CREATE TABLE HomeNodes AS
-SELECT T1.*, T2.id AS region, T2.CumProb
-FROM Nodes T1, HomeRegions T2
-WHERE ST_Intersects(T2.geom, T1.geom);
-
-CREATE INDEX HomeNodes_id_idx ON HomeNodes USING BTREE (id);
-
-DROP TABLE IF EXISTS WorkNodes;
-CREATE TABLE WorkNodes AS
-SELECT T1.*, T2.id AS region
-FROM Nodes T1, WorkRegions T2
-WHERE ST_Intersects(T1.geom, T2.geom);
-
-CREATE INDEX WorkNodes_id_idx ON WorkNodes USING BTREE (id);
+DROP TABLE IF EXISTS MunicGeom;
 
 -------------------------------------------------------------------------------
 -- THE END

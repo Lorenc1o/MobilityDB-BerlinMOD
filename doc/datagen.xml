@@ -120,13 +120,13 @@ osm2pgrouting -h localhost -p 5432 -U dbowner -f brussels.osm --dbname brussels 
 			The configuration file <varname>mapconfig_brussels.xml</varname> tells osm2pgrouting which are the roads that will be selected to build the road network as well as the speed limits of the different road types. During the conversion, osm2pgrouting transforms the data into WGS84 (SRID 4326), so we will need later to convert it back to SRID 3857.
 		</para>
 		<para>
-		<emphasis>Secondly, prepare the base data for the simulation.</emphasis> Now, the street network is ready in the database. The simulation scenario requires to sample home and work locations. To make it realistic, we want to load a map of the administrative regions of Brussels (called communes) and feed the simulator with real population and employment statistics in every commune.
+		<emphasis>Secondly, prepare the base data for the simulation.</emphasis> Now, the street network is ready in the database. The simulation scenario requires to sample home and work locations. To make it realistic, we want to load a map of Brussels' municipalities (called communes) and feed the simulator with real population and employment statistics in every municipality.
 		</para>
 		<para>
 			Load the administrative regions from the downloaded <varname>brussels.osm</varname> file, then run the <varname>brussels_generatedata.sql</varname> script using your PostgreSQL client, for example:
 			<programlisting>
-osm2pgsql -c -H localhost -P 5432 -U dbowner -d brussels brussels.osm
--- loads all layers in the osm file, including the adminstrative regions 
+osm2pgsql -c -H localhost -P 5432 -U dbowner -d brussels -r xml brussels.osm
+-- loads all layers in the osm file, including administrative regions 
 
 psql -h localhost -p 5432 -U dbowner -d brussels -f brussels_preparedata.sql
 -- samples home and work nodes, transforms data to SRID 3857, does further data preparation
@@ -993,7 +993,7 @@ psql -h localhost -p 5432 -U dbowner -d brussels -f deliveries_datagenerator.sql
 -- adds the pgplsql functions of the simulation to the database
 
 psql -h localhost -p 5432 -U dbowner -d brussels \
--c 'select deliveries_generate(scaleFactor := 0.005)'
+-c 'select deliveries_generate()'
 -- calls the main pgplsql function to start the simulation
 			</programlisting>
 			If everything is correct, you should see an output like that starts with this:
@@ -1007,7 +1007,7 @@ INFO:  No. of warehouses = 7, No. of vehicles = 141, No. of days = 4
 INFO:  Start day = 2020-06-01, Path mode = Fastest Path, Disturb data = f
 ...
 			</programlisting>
-			The generator will take about one minute. It will generate deliveries, according to the default parameters, for 141 cars over 2 days starting from Monday, June 1<superscript>st</superscript> 2020. It is possible to generate more or less data by respectively passing a bigger or a smaller scale factor value. Please refer to the <xref linkend="datagen_customizing" /> to see all the parameters that can be used to customize the simulation, with the exception of the <varname>P_NEIGHBOURHOOD_RADIUS</varname> parameter, which is not used in this scenario.
+			The generator will take about one minute. It will generate deliveries, according to the default parameters, for a scale factor of 0.005 which implies 141 cars over 4 days starting from Monday, June 1<superscript>st</superscript> 2020. It is possible to generate more or less data by passing a bigger or a smaller scale factor value. Please refer to the <xref linkend="datagen_customizing" /> to see all the parameters that can be used to customize the simulation, with the exception of the <varname>P_NEIGHBOURHOOD_RADIUS</varname> parameter, which is not used in this scenario.
 		</para>
 
 		<para>
@@ -1190,7 +1190,7 @@ FOR i IN 1..noDays LOOP
   aDay = aDay + interval '1 day';
 END LOOP;
 			</programlisting>
-			We start by creating the tables <varname>Deliveries</varname> and <varname>Segments</varname>. Then, the procedure simply loops for each day (excepted Sundays) and for each vehicle and generates the deliveries. For this, we first set the start time of a delivery trip by adding to 7 am a random non-zero duration of 120 minutes using a uniform distribution. Then, for every couple of source and destination nodes in a segment, we call the function <varname>create_trip</varname> that we have seen previously to generate the trip. We add a delivery time between 10 and 60 minutes using a bounded Gaussian distribution before starting the trip to the next customer or the return trip to the warehouse and then insert the trip into the <varname>Segments</varname> table.
+			We start by creating the tables <varname>Deliveries</varname> and <varname>Segments</varname>. Then, the procedure simply loops for each day (excepted Sundays) and for each vehicle and generates the deliveries. For this, we first set the start time of a delivery trip by adding to 7 am a random non-zero duration of 120 minutes using a uniform distribution. Then, for every couple of source and destination nodes in a segment, we call the function <varname>create_trip</varname> that we have seen previously to generate the trip. We add a delivery time between 10 and 60 minutes using a bounded Gaussian distribution before starting the trip to the next customer or the return trip to the warehouse and then insert the trip into the <varname>Segments</varname> table. After all segments of a delivery have been generated, the <varname>merge</varname> function is used to join all the trip segments into a single trip in order to add the delivery to the <varname>Deliveries</varname> table.
 		</para>
 		<para>
 			<xref linkend="deliveries1" /> and <xref linkend="deliveries2" /> show visualizations of the data generated for the deliveries scenario.
